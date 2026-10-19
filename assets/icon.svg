@@ -1,4 +1,42 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Strelitzia placeholder icon">
-  <circle cx="256" cy="256" r="236" fill="#176B3A"/>
-  <path d="M328 168C300 140 260 132 224 144C180 158 160 194 176 228C190 258 226 268 262 278C304 290 332 310 332 342C332 382 292 404 248 400C214 397 184 382 164 356" fill="none" stroke="#FFFFFF" stroke-width="56" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <filter id="brush" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.06" numOctaves="2" seed="7"/>
+      <feDisplacementMap in="SourceGraphic" scale="4"/>
+    </filter>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+  </defs>
+
+  <rect width="256" height="256" rx="48" fill="#F1EADB"/>
+
+  <!-- translate solved by balance.py: YCbCr visual-weight centroid -> optical center (128, ~124) -->
+  <g transform="translate(18 10) scale(0.85)">
+    <!-- warm halo: light falling on the bloom -->
+    <ellipse cx="148" cy="100" rx="62" ry="52" fill="#EBCB9C" opacity="0.55" filter="url(#soft)"/>
+    <!-- cool ground stroke: anchors the stem -->
+    <path d="M70 236 Q120 228 172 236" fill="none" stroke="#B7C4B4" stroke-width="12" stroke-linecap="round" opacity="0.6" filter="url(#brush)"/>
+
+    <g filter="url(#brush)">
+      <path d="M112 236 Q66 176 52 104 Q96 146 118 222 Z" fill="#8FA587"/>
+      <path d="M112 230 Q84 170 60 116" fill="none" stroke="#6F8A6C" stroke-width="2.5" stroke-linecap="round" opacity="0.8"/>
+      <path d="M118 238 Q114 190 124 146" fill="none" stroke="#6F8A6C" stroke-width="7" stroke-linecap="round"/>
+
+      <path d="M126 138 Q108 98 100 58 Q124 96 136 136 Z" fill="#C9773F" opacity="0.92"/>
+      <path d="M134 136 Q136 92 148 46 Q150 94 144 136 Z" fill="#E3A857" opacity="0.92"/>
+      <path d="M142 136 Q160 96 190 66 Q170 104 152 136 Z" fill="#D98E4A" opacity="0.92"/>
+      <path d="M144 134 Q164 112 186 96 Q170 118 152 136 Z" fill="#5B7B9A"/>
+
+      <path d="M86 150 Q146 164 216 124 Q152 134 96 138 Z" fill="#6E8A73"/>
+      <path d="M92 146 Q150 154 214 125" fill="none" stroke="#8C6B78" stroke-width="3" stroke-linecap="round" opacity="0.75"/>
+    </g>
+
+    <g fill="none" stroke-linecap="round" stroke-width="4" opacity="0.55">
+      <path d="M114 92 l4 10" stroke="#F2C98E"/>
+      <path d="M144 70 l0 12" stroke="#F6D9A8"/>
+      <path d="M168 94 l-5 8" stroke="#F2C98E"/>
+      <path d="M150 140 l16 -3" stroke="#A9BFA4"/>
+    </g>
+  </g>
 </svg>
