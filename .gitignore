@@ -1,0 +1,15 @@
+# Build
+/target
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# Runtime data
+/data
+
+# Misc
+.DS_Store
