@@ -1,0 +1,28 @@
+[package]
+name = "strelitzia-admin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+askama.workspace = true
+askama_web.workspace = true
+axum.workspace = true
+chrono.workspace = true
+hex.workspace = true
+rand.workspace = true
+serde.workspace = true
+sha2.workspace = true
+strelitzia-core = { path = "../core" }
+strelitzia-store = { path = "../store" }
+subtle.workspace = true
+tower-sessions.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { version = "1", features = ["macros", "rt"] }
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

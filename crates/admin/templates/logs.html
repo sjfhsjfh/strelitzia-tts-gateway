@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Request logs · Strelitzia Admin{% endblock %}
+{% block content %}
+<h1>Request logs</h1>
+{% if logs.is_empty() %}
+<p class="muted">No requests logged yet.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Request</th>
+      <th>Model</th>
+      <th>Voice</th>
+      <th>Status</th>
+      <th>Latency</th>
+      <th>Provider</th>
+      <th>Time</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for log in logs %}
+    <tr>
+      <td><a href="/admin/logs/{{ log.request_id }}">{{ log.request_id }}</a></td>
+      <td>{{ log.model }}</td>
+      <td>{{ log.voice }}</td>
+      <td>{{ log.status_code }}</td>
+      <td>{{ log.latency_ms }} ms</td>
+      <td>
+        {% match log.provider %}
+        {% when Some with (provider) %}{{ provider }}
+        {% when None %}<span class="muted">—</span>
+        {% endmatch %}
+      </td>
+      <td>{{ log.created_at.stamp() }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<nav class="pager">
+  {% match prev_offset %}
+  {% when Some with (offset) %}<a href="/admin/logs?limit={{ limit }}&amp;offset={{ offset }}">Newer</a>
+  {% when None %}
+  {% endmatch %}
+  {% match next_offset %}
+  {% when Some with (offset) %}<a href="/admin/logs?limit={{ limit }}&amp;offset={{ offset }}">Older</a>
+  {% when None %}
+  {% endmatch %}
+</nav>
+{% endblock %}

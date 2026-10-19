@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Channels · Strelitzia Admin{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Channels</h1>
+  <a class="button" href="/admin/channels/new">New channel</a>
+</div>
+{% if channels.is_empty() %}
+<p class="muted">No channels configured yet.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Kind</th>
+      <th>Base URL</th>
+      <th>API key</th>
+      <th>Models</th>
+      <th>Voices</th>
+      <th>Priority</th>
+      <th>Weight</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for channel in channels %}
+    <tr>
+      <td>{{ channel.name }}</td>
+      <td><code>{{ channel.kind }}</code></td>
+      <td>
+        {% match channel.base_url %}
+        {% when Some with (url) %}{{ url }}
+        {% when None %}<span class="muted">—</span>
+        {% endmatch %}
+      </td>
+      <td>
+        {% if channel.api_key_set %}<span class="masked">••••••••</span>
+        {% else %}<span class="muted">not set</span>{% endif %}
+      </td>
+      <td>{{ channel.models }}</td>
+      <td>
+        {% if channel.voices_count == 0 %}
+        <span class="muted">any voice</span>
+        {% else %}
+        {{ channel.voices_count }} voice{% if channel.voices_count != 1 %}s{% endif %} · <code>{{ channel.voice_namespace }}</code>
+        {% endif %}
+      </td>
+      <td>{{ channel.priority }}</td>
+      <td>{{ channel.weight }}</td>
+      <td>
+        {% if channel.enabled %}<span class="badge on">enabled</span>
+        {% else %}<span class="badge off">disabled</span>{% endif %}
+      </td>
+      <td class="actions">
+        <a href="/admin/channels/{{ channel.id }}/edit">Edit</a>
+        <form method="post" action="/admin/channels/{{ channel.id }}/toggle" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="link">
+            {% if channel.enabled %}Disable{% else %}Enable{% endif %}
+          </button>
+        </form>
+        <form method="post" action="/admin/channels/{{ channel.id }}/delete" class="inline"
+              onsubmit="return confirm('Delete this channel?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="link danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

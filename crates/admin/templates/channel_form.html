@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}{% if editing %}Edit channel{% else %}New channel{% endif %} · Strelitzia Admin{% endblock %}
+{% block content %}
+<h1>{% if editing %}Edit channel{% else %}New channel{% endif %}</h1>
+{% match error %}
+{% when Some with (message) %}
+<div class="error">{{ message }}</div>
+{% when None %}
+{% endmatch %}
+<form method="post" action="{{ action }}" class="stack card">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <label>
+    Name
+    <input type="text" name="name" value="{{ values.name }}" required>
+  </label>
+
+  <label>
+    Kind
+    <select name="kind" id="channel-kind">
+      <option value="openai_compatible"{% if values.kind == "openai_compatible" %} selected{% endif %}>OpenAI compatible</option>
+      <option value="edge_tts"{% if values.kind == "edge_tts" %} selected{% endif %}>Edge TTS</option>
+      <option value="doubao_tts"{% if values.kind == "doubao_tts" %} selected{% endif %}>Doubao TTS</option>
+    </select>
+  </label>
+
+  <label>
+    Base URL
+    <input type="text" name="base_url" id="channel-base-url" value="{{ values.base_url }}">
+  </label>
+  <p class="hint" id="channel-base-url-hint"></p>
+
+  <label>
+    API key
+    <input type="password" name="api_key" id="channel-api-key" value="" autocomplete="new-password"
+           placeholder="{% if editing %}Leave blank to keep the current key{% else %}Optional{% endif %}">
+  </label>
+  <p class="hint" id="channel-api-key-hint"></p>
+  {% if editing %}<p class="hint">A blank API key keeps the stored value unchanged.</p>{% endif %}
+
+  <label>
+    Models
+    <textarea name="models" rows="4" placeholder="tts-1&#10;tts-1-hd" required>{{ values.models }}</textarea>
+  </label>
+  <p class="hint">Separate models with commas or new lines. Prefer provider-specific aliases (e.g. <code>openai-tts-1</code>, <code>edge-tts</code>).</p>
+
+  <label>
+    Voices
+    <textarea name="voices" rows="3" placeholder="alloy&#10;nova">{{ values.voices }}</textarea>
+  </label>
+  <p class="hint">Comma or new line separated. Leave empty to accept any voice. Optional <code>provider:voice</code> prefixes must match the voice namespace.</p>
+
+  <label>
+    Voice namespace
+    <input type="text" name="voice_namespace" id="channel-voice-namespace" value="{{ values.voice_namespace }}" placeholder="openai">
+  </label>
+  <p class="hint" id="channel-voice-namespace-hint"></p>
+
+  <div class="row">
+    <label>
+      Priority
+      <input type="number" name="priority" value="{{ values.priority }}">
+    </label>
+    <label>
+      Weight
+      <input type="number" name="weight" min="0" max="4294967295" value="{{ values.weight }}">
+    </label>
+  </div>
+
+  <label class="checkbox">
+    <input type="checkbox" name="enabled" value="on"{% if values.enabled %} checked{% endif %}>
+    Enabled
+  </label>
+
+  <div class="actions">
+    <button type="submit">Save</button>
+    <a href="/admin/channels">Cancel</a>
+  </div>
+</form>
+<script>
+  (function () {
+    "use strict";
+    var kind = document.getElementById("channel-kind");
+    var baseUrl = document.getElementById("channel-base-url");
+    var baseUrlHint = document.getElementById("channel-base-url-hint");
+    var apiKeyHint = document.getElementById("channel-api-key-hint");
+    var voiceNamespace = document.getElementById("channel-voice-namespace");
+    var voiceNamespaceHint = document.getElementById("channel-voice-namespace-hint");
+
+    var guidance = {
+      openai_compatible: {
+        baseUrlPlaceholder: "https://api.openai.com",
+        baseUrlValue: "https://api.openai.com",
+        baseUrlHint: "Required. Suggested value filled in; replace it if needed.",
+        baseUrlRequired: true,
+        apiKeyHint: "Optional; sent as Bearer to the upstream.",
+        voiceNamespace: "openai",
+        voiceNamespaceHint: "Used to match `provider:voice` requests."
+      },
+      doubao_tts: {
+        baseUrlPlaceholder: "https://openspeech.bytedance.com",
+        baseUrlValue: "https://openspeech.bytedance.com",
+        baseUrlHint: "Required. Suggested value filled in; replace it if needed.",
+        baseUrlRequired: true,
+        apiKeyHint: "Required: Volcengine API key.",
+        voiceNamespace: "volcengine",
+        voiceNamespaceHint: "`doubao` and `volcengine` are interchangeable."
+      },
+      edge_tts: {
+        baseUrlPlaceholder: "Not used for Edge TTS",
+        baseUrlValue: "",
+        baseUrlHint: "Not used for Edge TTS.",
+        baseUrlRequired: false,
+        apiKeyHint: "Not used for Edge TTS.",
+        voiceNamespace: "edge",
+        voiceNamespaceHint: "Used to match `provider:voice` requests."
+      }
+    };
+
+    var previousDefault = null;
+    var previousNamespaceDefault = null;
+    var initialized = false;
+
+    function applyKindGuidance() {
+      var current = guidance[kind.value] || guidance.openai_compatible;
+
+      // First run (new or edit page): only fill an empty input so a stored
+      // base URL is never overwritten. After a kind change, also replace the
+      // previous kind's suggested default, but never a custom value.
+      if (!initialized) {
+        if (baseUrl.value === "") {
+          baseUrl.value = current.baseUrlValue;
+        }
+      } else if (baseUrl.value === "" || baseUrl.value === previousDefault) {
+        baseUrl.value = current.baseUrlValue;
+      }
+
+      baseUrl.placeholder = current.baseUrlPlaceholder;
+      baseUrl.required = current.baseUrlRequired;
+      baseUrlHint.textContent = current.baseUrlHint;
+      apiKeyHint.textContent = current.apiKeyHint;
+
+      if (!initialized) {
+        if (voiceNamespace.value === "") {
+          voiceNamespace.value = current.voiceNamespace;
+        }
+      } else if (voiceNamespace.value === "" || voiceNamespace.value === previousNamespaceDefault) {
+        voiceNamespace.value = current.voiceNamespace;
+      }
+      voiceNamespaceHint.textContent = current.voiceNamespaceHint;
+
+      previousDefault = current.baseUrlValue;
+      previousNamespaceDefault = current.voiceNamespace;
+      initialized = true;
+    }
+
+    kind.addEventListener("change", applyKindGuidance);
+    applyKindGuidance();
+  })();
+</script>
+{% endblock %}

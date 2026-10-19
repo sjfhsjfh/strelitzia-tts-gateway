@@ -13,3 +13,9 @@
 
 # Misc
 .DS_Store
+
+# Local configuration
+config.toml
+
+# Generated
+openapi.json

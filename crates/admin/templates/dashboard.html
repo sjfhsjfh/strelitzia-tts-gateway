@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Strelitzia Admin{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<div class="stats">
+  <a class="stat card" href="/admin/channels">
+    <strong>{{ channel_count }}</strong>
+    <span>Channels</span>
+  </a>
+  <a class="stat card" href="/admin/keys">
+    <strong>{{ key_count }}</strong>
+    <span>API keys</span>
+  </a>
+  <a class="stat card" href="/admin/logs">
+    <strong>{{ recent_count }}</strong>
+    <span>Recent requests (last 10)</span>
+  </a>
+</div>
+<div class="actions">
+  <a class="button" href="/admin/channels/new">New channel</a>
+  <a class="button" href="/admin/keys">Manage keys</a>
+  <a class="button" href="/admin/logs">View logs</a>
+</div>
+{% endblock %}

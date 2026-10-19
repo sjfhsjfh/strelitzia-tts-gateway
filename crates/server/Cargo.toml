@@ -3,3 +3,50 @@ name = "strelitzia-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[lib]
+name = "strelitzia_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "strelitzia"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+figment.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+strelitzia-admin = { path = "../admin" }
+strelitzia-core = { path = "../core" }
+strelitzia-providers = { path = "../providers" }
+strelitzia-routing = { path = "../routing" }
+strelitzia-store = { path = "../store" }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "signal", "time"] }
+toml.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
+uuid.workspace = true
+
+[build-dependencies]
+winresource = "0.1.34"
+
+[dev-dependencies]
+async-trait.workspace = true
+tempfile.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

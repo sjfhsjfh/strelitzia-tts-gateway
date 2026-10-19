@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}API keys · Strelitzia Admin{% endblock %}
+{% block content %}
+<h1>API keys</h1>
+
+{% match new_key %}
+{% when Some with (key) %}
+<div class="notice">
+  <p><strong>Copy this key now.</strong> It is shown only once and cannot be recovered.</p>
+  <code class="secret">{{ key }}</code>
+</div>
+{% when None %}
+{% endmatch %}
+
+{% match error %}
+{% when Some with (message) %}
+<div class="error">{{ message }}</div>
+{% when None %}
+{% endmatch %}
+
+<form method="post" action="/admin/keys" class="inline-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>
+    Key name
+    <input type="text" name="name" placeholder="e.g. my-client" required>
+  </label>
+  <button type="submit">Create key</button>
+</form>
+
+{% if keys.is_empty() %}
+<p class="muted">No API keys yet.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Prefix</th>
+      <th>Status</th>
+      <th>Created</th>
+      <th>Last used</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for key in keys %}
+    <tr>
+      <td>{{ key.name }}</td>
+      <td><code>{{ key.key_prefix }}…</code></td>
+      <td>
+        {% if key.enabled %}<span class="badge on">active</span>
+        {% else %}<span class="badge off">revoked</span>{% endif %}
+      </td>
+      <td>{{ key.created_at.stamp() }}</td>
+      <td>
+        {% match key.last_used_at %}
+        {% when Some with (used) %}{{ used.stamp() }}
+        {% when None %}<span class="muted">never</span>
+        {% endmatch %}
+      </td>
+      <td class="actions">
+        {% if key.enabled %}
+        <form method="post" action="/admin/keys/{{ key.id }}/revoke" class="inline"
+              onsubmit="return confirm('Revoke this key?')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="link danger">Revoke</button>
+        </form>
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

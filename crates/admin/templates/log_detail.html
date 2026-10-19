@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Request {{ log.request_id }} · Strelitzia Admin{% endblock %}
+{% block content %}
+<h1>Request detail</h1>
+<dl class="facts card">
+  <dt>Request id</dt><dd><code>{{ log.request_id }}</code></dd>
+  <dt>Model</dt><dd>{{ log.model }}</dd>
+  <dt>Voice</dt><dd>{{ log.voice }}</dd>
+  <dt>Status</dt><dd>{{ log.status_code }}</dd>
+  <dt>Latency</dt><dd>{{ log.latency_ms }} ms</dd>
+  <dt>Characters</dt><dd>{{ log.chars }}</dd>
+  <dt>Provider</dt>
+  <dd>
+    {% match log.provider %}
+    {% when Some with (provider) %}{{ provider }}
+    {% when None %}<span class="muted">—</span>
+    {% endmatch %}
+  </dd>
+  <dt>API key id</dt>
+  <dd>
+    {% match log.api_key_id %}
+    {% when Some with (id) %}{{ id }}
+    {% when None %}<span class="muted">—</span>
+    {% endmatch %}
+  </dd>
+  <dt>Channel id</dt>
+  <dd>
+    {% match log.channel_id %}
+    {% when Some with (id) %}{{ id }}
+    {% when None %}<span class="muted">—</span>
+    {% endmatch %}
+  </dd>
+  <dt>Error</dt>
+  <dd>
+    {% match log.error %}
+    {% when Some with (message) %}<code>{{ message }}</code>
+    {% when None %}<span class="muted">—</span>
+    {% endmatch %}
+  </dd>
+  <dt>Time</dt><dd>{{ log.created_at.stamp() }}</dd>
+</dl>
+
+<h2>Attempts</h2>
+{% if attempts.is_empty() %}
+<p class="muted">No upstream attempts were made.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Channel</th>
+      <th>Outcome</th>
+      <th>Latency</th>
+      <th>Error</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for attempt in attempts %}
+    <tr>
+      <td>{{ attempt.attempt_no }}</td>
+      <td>
+        {% match attempt.channel_id %}
+        {% when Some with (id) %}{{ id }}
+        {% when None %}<span class="muted">—</span>
+        {% endmatch %}
+      </td>
+      <td>
+        {% if attempt.outcome == "success" %}<span class="badge on">success</span>
+        {% else %}<span class="badge off">{{ attempt.outcome }}</span>{% endif %}
+      </td>
+      <td>{{ attempt.latency_ms }} ms</td>
+      <td>
+        {% match attempt.error %}
+        {% when Some with (message) %}<code>{{ message }}</code>
+        {% when None %}<span class="muted">—</span>
+        {% endmatch %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<p><a href="/admin/logs">Back to logs</a></p>
+{% endblock %}
