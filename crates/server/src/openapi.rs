@@ -4,7 +4,7 @@ use std::path::Path;
 use serde_json::Value;
 use utoipa::openapi::schema::{KnownFormat, ObjectBuilder, Schema, SchemaFormat, SchemaType, Type};
 use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityRequirement, SecurityScheme};
-use utoipa::openapi::{Components, OpenApi, RefOr};
+use utoipa::openapi::{Components, LicenseBuilder, OpenApi, RefOr};
 
 pub const OPENAPI_FILE: &str = "openapi.json";
 
@@ -31,6 +31,13 @@ pub fn openapi() -> OpenApi {
     document.info.version = env!("CARGO_PKG_VERSION").to_owned();
     document.info.description = Some(
         "OpenAI-compatible text-to-speech aggregation gateway with a Legado endpoint.".to_owned(),
+    );
+    document.info.contact = None;
+    document.info.license = Some(
+        LicenseBuilder::new()
+            .name("MIT")
+            .identifier(Some("MIT"))
+            .build(),
     );
 
     let components = document.components.get_or_insert_with(Components::new);
