@@ -5,9 +5,14 @@
 //! (`code == 20000000`), or reports a business error. Some deployments wrap
 //! each object in an SSE `data:` prefix, which is accepted as well.
 
+use std::collections::VecDeque;
+
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use bytes::Bytes;
+use futures_util::StreamExt;
+use futures_util::stream;
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, RETRY_AFTER};
 use serde::Deserialize;
@@ -51,7 +56,6 @@ impl TtsAdapter for DoubaoTtsAdapter {
         Capabilities {
             formats: FORMATS,
             supports_instructions: false,
-            supports_stream: false,
         }
     }
 
@@ -127,10 +131,37 @@ impl TtsAdapter for DoubaoTtsAdapter {
             ));
         }
 
-        let audio = read_events(response, api_key, log_id.as_deref()).await?;
+        let reader = DoubaoReader {
+            response: Box::pin(response.bytes_stream()),
+            pending: VecDeque::new(),
+            buffer: Vec::new(),
+            api_key: api_key.to_owned(),
+            log_id: log_id.clone(),
+            completed: false,
+        };
+        let remaining = stream::try_unfold(reader, |mut reader| async move {
+            Ok(next_chunk(&mut reader).await?.map(|bytes| (bytes, reader)))
+        });
+        let mut stream = Box::pin(remaining);
+
+        // Prefetch past control lines so early business errors can fail over.
+        let first = match stream.next().await {
+            Some(Ok(bytes)) => bytes,
+            Some(Err(error)) => return Err(error),
+            None => {
+                return Err(GatewayError::Upstream {
+                    message: sanitize(
+                        with_log_id("Doubao returned no audio".to_owned(), log_id.as_deref()),
+                        Some(api_key),
+                    ),
+                });
+            }
+        };
 
         Ok(AudioResponse {
-            bytes: audio.into(),
+            stream: Box::pin(
+                stream::once(async move { Ok::<_, GatewayError>(first) }).chain(stream),
+            ),
             content_type: ResponseFormat::Mp3.content_type().to_owned(),
             provider: "doubao_tts".to_owned(),
             voice: req.voice.clone(),
@@ -173,82 +204,81 @@ struct DoubaoEvent {
 }
 
 enum LineOutcome {
+    Audio(Bytes),
     Continue,
     Completed,
 }
 
-/// Drain the chunked NDJSON response, decoding and concatenating audio.
-async fn read_events(
-    mut response: reqwest::Response,
-    api_key: &str,
-    log_id: Option<&str>,
-) -> Result<Vec<u8>, GatewayError> {
-    let mut audio = Vec::new();
-    let mut pending = Vec::new();
-    let mut completed = false;
+struct DoubaoReader {
+    response:
+        std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    pending: VecDeque<Bytes>,
+    buffer: Vec<u8>,
+    api_key: String,
+    log_id: Option<String>,
+    completed: bool,
+}
 
-    while let Some(chunk) =
-        response
-            .chunk()
-            .await
-            .map_err(|error| GatewayError::UpstreamUnavailable {
-                message: sanitize(
-                    with_log_id(format!("Doubao response stream failed: {error}"), log_id),
-                    Some(api_key),
-                ),
-            })?
-    {
-        pending.extend_from_slice(&chunk);
+impl DoubaoReader {
+    fn apply(&mut self, line: &[u8]) -> Result<(), GatewayError> {
+        match handle_event_line(line, &self.api_key, self.log_id.as_deref())? {
+            LineOutcome::Audio(bytes) => self.pending.push_back(bytes),
+            LineOutcome::Continue => {}
+            LineOutcome::Completed => self.completed = true,
+        }
+        Ok(())
+    }
+}
 
-        while let Some(index) = pending.iter().position(|byte| *byte == b'\n') {
-            let line: Vec<u8> = pending.drain(..=index).collect();
-            if matches!(
-                handle_event_line(&line, &mut audio, api_key, log_id)?,
-                LineOutcome::Completed
-            ) {
-                completed = true;
-                break;
+/// Pull network chunks until a decoded audio chunk or a terminal condition.
+async fn next_chunk(reader: &mut DoubaoReader) -> Result<Option<Bytes>, GatewayError> {
+    loop {
+        if let Some(bytes) = reader.pending.pop_front() {
+            return Ok(Some(bytes));
+        }
+        if reader.completed {
+            return Ok(None);
+        }
+        if let Some(index) = reader.buffer.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = reader.buffer.drain(..=index).collect();
+            reader.apply(&line)?;
+            continue;
+        }
+
+        match reader.response.next().await {
+            Some(Ok(chunk)) => reader.buffer.extend_from_slice(&chunk),
+            Some(Err(error)) => {
+                return Err(GatewayError::UpstreamUnavailable {
+                    message: sanitize(
+                        with_log_id(
+                            format!("Doubao response stream failed: {error}"),
+                            reader.log_id.as_deref(),
+                        ),
+                        Some(&reader.api_key),
+                    ),
+                });
+            }
+            None => {
+                if reader.buffer.is_empty() {
+                    return Err(GatewayError::Upstream {
+                        message: sanitize(
+                            with_log_id(
+                                "Doubao stream ended without a completion event".to_owned(),
+                                reader.log_id.as_deref(),
+                            ),
+                            Some(&reader.api_key),
+                        ),
+                    });
+                }
+                let line = std::mem::take(&mut reader.buffer);
+                reader.apply(&line)?;
             }
         }
-
-        if completed {
-            break;
-        }
     }
-
-    if !completed && !pending.is_empty() {
-        completed = matches!(
-            handle_event_line(&pending, &mut audio, api_key, log_id)?,
-            LineOutcome::Completed
-        );
-    }
-
-    if !completed {
-        return Err(GatewayError::Upstream {
-            message: sanitize(
-                with_log_id(
-                    "Doubao stream ended without a completion event".to_owned(),
-                    log_id,
-                ),
-                Some(api_key),
-            ),
-        });
-    }
-    if audio.is_empty() {
-        return Err(GatewayError::Upstream {
-            message: sanitize(
-                with_log_id("Doubao returned no audio".to_owned(), log_id),
-                Some(api_key),
-            ),
-        });
-    }
-
-    Ok(audio)
 }
 
 fn handle_event_line(
     line: &[u8],
-    audio: &mut Vec<u8>,
     api_key: &str,
     log_id: Option<&str>,
 ) -> Result<LineOutcome, GatewayError> {
@@ -286,21 +316,21 @@ fn handle_event_line(
     match event.code {
         COMPLETION_CODE => Ok(LineOutcome::Completed),
         0 => {
-            if let Some(encoded) = event.data.as_deref().filter(|data| !data.is_empty()) {
-                let decoded = STANDARD
-                    .decode(encoded)
-                    .map_err(|error| GatewayError::Upstream {
-                        message: sanitize(
-                            with_log_id(
-                                format!("Doubao returned invalid audio data: {error}"),
-                                log_id,
-                            ),
-                            Some(api_key),
+            let Some(encoded) = event.data.as_deref().filter(|data| !data.is_empty()) else {
+                return Ok(LineOutcome::Continue);
+            };
+            let decoded = STANDARD
+                .decode(encoded)
+                .map_err(|error| GatewayError::Upstream {
+                    message: sanitize(
+                        with_log_id(
+                            format!("Doubao returned invalid audio data: {error}"),
+                            log_id,
                         ),
-                    })?;
-                audio.extend_from_slice(&decoded);
-            }
-            Ok(LineOutcome::Continue)
+                        Some(api_key),
+                    ),
+                })?;
+            Ok(LineOutcome::Audio(Bytes::from(decoded)))
         }
         code => {
             let message = event

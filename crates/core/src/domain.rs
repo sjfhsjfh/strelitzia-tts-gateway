@@ -1,4 +1,9 @@
+use std::fmt;
+use std::pin::Pin;
+
 use bytes::Bytes;
+use futures_util::Stream;
+use futures_util::stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use utoipa::ToSchema;
@@ -119,6 +124,17 @@ impl ResponseFormat {
     }
 }
 
+/// Wire format of the gateway response, not of the upstream request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamFormat {
+    /// Raw audio bytes.
+    #[default]
+    Audio,
+    /// OpenAI speech SSE events with base64 audio deltas.
+    Sse,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SpeechRequest {
     pub model: String,
@@ -130,6 +146,9 @@ pub struct SpeechRequest {
     pub speed: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
+    /// Gateway response format; skipped when forwarding upstream.
+    #[serde(default, skip_serializing)]
+    pub stream_format: StreamFormat,
     #[serde(flatten)]
     #[schema(value_type = Object)]
     pub extra: Map<String, Value>,
@@ -173,11 +192,44 @@ impl SpeechRequest {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Upstream audio chunks. The first item is available when `synthesize` returns.
+pub type AudioStream = Pin<Box<dyn Stream<Item = Result<Bytes, GatewayError>> + Send + 'static>>;
+
 pub struct AudioResponse {
-    pub bytes: Bytes,
+    pub stream: AudioStream,
     pub content_type: String,
     pub provider: String,
     pub voice: String,
     pub chars: usize,
+}
+
+impl AudioResponse {
+    /// Wrap an already-buffered body; useful for buffered adapters and tests.
+    pub fn once(
+        bytes: impl Into<Bytes>,
+        content_type: impl Into<String>,
+        provider: impl Into<String>,
+        voice: impl Into<String>,
+        chars: usize,
+    ) -> Self {
+        let bytes = bytes.into();
+        Self {
+            stream: Box::pin(stream::once(async move { Ok(bytes) })),
+            content_type: content_type.into(),
+            provider: provider.into(),
+            voice: voice.into(),
+            chars,
+        }
+    }
+}
+
+impl fmt::Debug for AudioResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AudioResponse")
+            .field("content_type", &self.content_type)
+            .field("provider", &self.provider)
+            .field("voice", &self.voice)
+            .field("chars", &self.chars)
+            .finish_non_exhaustive()
+    }
 }

@@ -6,6 +6,8 @@ use async_trait::async_trait;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{HeaderMap, Request, StatusCode, header};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 use strelitzia_core::keys;
 use strelitzia_core::{
@@ -192,6 +194,27 @@ async fn openai_speech_contract() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(header(&headers, "content-type"), "audio/mpeg");
     assert_eq!(audio, b"mock:tts-1:alloy:hello");
+
+    let mut sse = speech_body("tts-1", "hello", 1.0);
+    sse["stream_format"] = json!("sse");
+    let (status, headers, payload) = context.speech(sse).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(header(&headers, "content-type"), "text/event-stream");
+    assert_eq!(header(&headers, "cache-control"), "no-cache");
+    assert_eq!(header(&headers, "x-accel-buffering"), "no");
+
+    let expected_delta = format!(
+        "data: {{\"type\":\"speech.audio.delta\",\"audio\":\"{}\"}}",
+        STANDARD.encode(b"mock:tts-1:alloy:hello")
+    );
+    let expected_done = "data: {\"type\":\"speech.audio.done\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"total_tokens\":0}}";
+    let text = String::from_utf8(payload).unwrap();
+    let frames: Vec<&str> = text
+        .split("\n\n")
+        .filter(|frame| !frame.is_empty())
+        .collect();
+    assert_eq!(frames, vec![expected_delta.as_str(), expected_done]);
+    assert!(!text.contains("[DONE]"));
 
     let (status, _, payload) = context
         .speech(speech_body("tts-1", &"a".repeat(4097), 1.0))

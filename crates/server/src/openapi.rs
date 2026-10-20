@@ -2,6 +2,8 @@ use std::io;
 use std::path::Path;
 
 use serde_json::Value;
+use strelitzia_core::StreamFormat;
+use utoipa::PartialSchema;
 use utoipa::openapi::schema::{KnownFormat, ObjectBuilder, Schema, SchemaFormat, SchemaType, Type};
 use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityRequirement, SecurityScheme};
 use utoipa::openapi::{Components, LicenseBuilder, OpenApi, RefOr};
@@ -23,6 +25,21 @@ impl utoipa::PartialSchema for BinaryAudio {
 }
 
 impl utoipa::ToSchema for BinaryAudio {}
+
+/// Schema-only: `text/event-stream` body made of `data:` frames.
+pub struct SseStream;
+
+impl utoipa::PartialSchema for SseStream {
+    fn schema() -> RefOr<Schema> {
+        RefOr::T(Schema::Object(
+            ObjectBuilder::new()
+                .schema_type(SchemaType::new(Type::String))
+                .build(),
+        ))
+    }
+}
+
+impl utoipa::ToSchema for SseStream {}
 
 pub fn openapi() -> OpenApi {
     let (_, mut document) = crate::api::openapi_router().split_for_parts();
@@ -51,7 +68,28 @@ pub fn openapi() -> OpenApi {
         Vec::<String>::new(),
     )]);
 
+    add_stream_format_schema(&mut document);
+
     document
+}
+
+/// `skip_serializing` keeps the field out of upstream payloads but also out of
+/// the derived schema, so re-add its description-only property here.
+fn add_stream_format_schema(document: &mut OpenApi) {
+    let Some(components) = document.components.as_mut() else {
+        return;
+    };
+    let Some(RefOr::T(Schema::AllOf(all_of))) = components.schemas.get_mut("SpeechRequest") else {
+        return;
+    };
+    let Some(RefOr::T(Schema::Object(object))) = all_of.items.iter_mut().find(|item| {
+        matches!(item, RefOr::T(Schema::Object(object)) if object.properties.contains_key("model"))
+    }) else {
+        return;
+    };
+    object
+        .properties
+        .insert("stream_format".to_owned(), StreamFormat::schema());
 }
 
 pub fn write_or_check(check: bool) -> Result<(), io::Error> {

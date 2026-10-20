@@ -4,7 +4,8 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use strelitzia_core::{
-    Channel, ChannelKind, GatewayError, ResponseFormat, SpeechRequest, split_voice_reference,
+    Channel, ChannelKind, GatewayError, ResponseFormat, SpeechRequest, StreamFormat,
+    split_voice_reference,
 };
 use utoipa::ToSchema;
 
@@ -101,6 +102,7 @@ pub async fn speech_stream(
         response_format: ResponseFormat::Mp3,
         speed,
         instructions: None,
+        stream_format: StreamFormat::Audio,
         extra: Map::new(),
     };
     if let Err(error) = template.validate() {
@@ -203,6 +205,7 @@ pub async fn speech_stream(
         response_format: ResponseFormat::Mp3,
         speed,
         instructions: None,
+        stream_format: StreamFormat::Audio,
         extra: Map::new(),
     })
     .await;

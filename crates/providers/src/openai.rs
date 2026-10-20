@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::StatusCode;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, RETRY_AFTER};
 use strelitzia_core::ErrorEnvelope;
@@ -40,7 +41,6 @@ impl TtsAdapter for OpenAiCompatibleAdapter {
         Capabilities {
             formats: FORMATS,
             supports_instructions: true,
-            supports_stream: false,
         }
     }
 
@@ -95,11 +95,27 @@ impl TtsAdapter for OpenAiCompatibleAdapter {
             .get(CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let body = read_body(response).await?;
         let content_type = audio_content_type(header.as_deref(), req.response_format)?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_BODY_BYTES as u64)
+        {
+            return Err(body_too_large());
+        }
+
+        let api_key = channel.api_key.clone();
+        let stream = response.bytes_stream().map(move |chunk| match chunk {
+            Ok(bytes) => Ok(bytes),
+            Err(error) => Err(GatewayError::UpstreamUnavailable {
+                message: sanitize(
+                    format!("failed to read upstream response: {error}"),
+                    api_key.as_deref(),
+                ),
+            }),
+        });
 
         Ok(AudioResponse {
-            bytes: body.into(),
+            stream: Box::pin(stream),
             content_type,
             provider: "openai".to_owned(),
             voice: req.voice.clone(),
@@ -260,6 +276,16 @@ mod tests {
 
     use super::OpenAiCompatibleAdapter;
 
+    async fn collect(mut stream: strelitzia_core::AudioStream) -> Vec<u8> {
+        use futures_util::StreamExt;
+
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            body.extend_from_slice(&chunk.unwrap());
+        }
+        body
+    }
+
     fn channel(base_url: impl Into<String>, api_key: Option<&str>) -> Channel {
         Channel {
             id: 1,
@@ -283,6 +309,7 @@ mod tests {
             "voice": "alloy",
             "response_format": "mp3",
             "speed": 1.25,
+            "stream_format": "sse",
             "custom_field": { "nested": true },
             "numeric_field": 7
         }))
@@ -327,7 +354,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.bytes, b"ID3-audio"[..]);
+        assert_eq!(collect(response.stream).await, b"ID3-audio".to_vec());
         assert_eq!(response.content_type, "audio/mpeg");
         assert_eq!(response.provider, "openai");
         assert_eq!(response.voice, "alloy");
@@ -369,6 +396,7 @@ mod tests {
             })
         );
         assert!(body.get("instructions").is_none());
+        assert!(body.get("stream_format").is_none());
 
         let error = synthesize_error(
             ResponseTemplate::new(429)

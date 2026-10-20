@@ -8,18 +8,23 @@ use std::convert::Infallible;
 use std::panic::AssertUnwindSafe;
 use std::time::Instant;
 
-use axum::body::Body;
+use axum::Json;
+use axum::Router;
+use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request};
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, RETRY_AFTER};
 use axum::http::request::Parts;
 use axum::http::{HeaderName, HeaderValue, StatusCode};
+use axum::middleware;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{Json, Router, middleware};
-use futures_util::FutureExt;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use futures_util::{FutureExt, Stream, StreamExt, stream};
 use strelitzia_core::{
-    AudioResponse, Channel, ChannelKind, GatewayError, SpeechRequest, split_voice_reference,
+    AudioResponse, AudioStream, Channel, ChannelKind, GatewayError, SpeechRequest,
+    split_voice_reference,
 };
 use strelitzia_routing::select_channel;
 use strelitzia_store::{NewAttempt, NewRequestLog};
@@ -378,39 +383,48 @@ where
     }
 }
 
-pub(crate) async fn record_request(
-    state: &AppState,
+// The request is logged when the response starts, so latency is time-to-first-chunk.
+// Failures observed after the stream starts are only surfaced via `tracing`.
+pub(crate) fn record_request<'a>(
+    state: &'a AppState,
     request_id: &str,
     api_key_id: i64,
     model: &str,
     voice: &str,
     chars: usize,
     run: &AttemptRun,
-) {
+) -> impl Future<Output = ()> + Send + 'a {
+    let status_code = run.status_code();
+    let latency_ms = run.latency_ms;
+    let attempts = run.attempts.clone();
+    let request_id = request_id.to_owned();
     let log = NewRequestLog {
-        request_id: request_id.to_owned(),
+        request_id: request_id.clone(),
         api_key_id: Some(api_key_id),
         model: model.to_owned(),
         voice: voice.to_owned(),
         provider: run.provider.clone(),
         channel_id: run.channel_id,
         chars: i64::try_from(chars).unwrap_or(i64::MAX),
-        status_code: i64::from(run.status_code()),
+        status_code: i64::from(status_code),
         error: run.error.as_ref().map(ToString::to_string),
-        latency_ms: run.latency_ms,
+        latency_ms,
     };
 
-    if let Err(error) = state.db().logs().record(log, &run.attempts).await {
-        tracing::warn!(%error, request_id, "failed to persist request log");
-    }
+    async move {
+        let attempt_count = attempts.len();
+        if let Err(error) = state.db().logs().record(log, &attempts).await {
+            tracing::warn!(%error, request_id, "failed to persist request log");
+        }
 
-    tracing::info!(
-        request_id,
-        status_code = run.status_code(),
-        latency_ms = run.latency_ms,
-        attempts = run.attempts.len(),
-        "request completed"
-    );
+        tracing::info!(
+            request_id,
+            status_code,
+            latency_ms,
+            attempts = attempt_count,
+            "request completed"
+        );
+    }
 }
 
 pub(crate) fn audio_response(
@@ -425,7 +439,7 @@ pub(crate) fn audio_response(
     } else {
         audio.content_type.as_str()
     };
-    let mut response = Body::from(audio.bytes).into_response();
+    let mut response = Body::from_stream(log_terminal(audio.stream)).into_response();
     *response.status_mut() = StatusCode::OK;
 
     let headers = response.headers_mut();
@@ -444,6 +458,85 @@ pub(crate) fn audio_response(
         header_value(&request_id.0),
     );
     response
+}
+
+const DONE_FRAME: &str = "data: {\"type\":\"speech.audio.done\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"total_tokens\":0}}\n\n";
+
+pub(crate) fn sse_response(
+    audio: AudioResponse,
+    request_id: &RequestId,
+    provider: &str,
+    voice: &str,
+    chars: usize,
+) -> Response {
+    let mut response = Body::from_stream(sse_stream(audio.stream)).into_response();
+    *response.status_mut() = StatusCode::OK;
+
+    let headers = response.headers_mut();
+    headers.insert(CONTENT_TYPE, header_value("text/event-stream"));
+    headers.insert(CACHE_CONTROL, header_value("no-cache"));
+    headers.insert(
+        HeaderName::from_static("x-accel-buffering"),
+        header_value("no"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-provider"),
+        header_value(provider),
+    );
+    headers.insert(HeaderName::from_static("x-voice"), header_value(voice));
+    headers.insert(
+        HeaderName::from_static("x-chars"),
+        header_value(&chars.to_string()),
+    );
+    headers.insert(
+        HeaderName::from_static(REQUEST_ID_HEADER),
+        header_value(&request_id.0),
+    );
+    response
+}
+
+// Log mid-stream failures and stop the body after the first error.
+fn log_terminal(stream: AudioStream) -> AudioStream {
+    Box::pin(stream::unfold(Some(stream), |state| async move {
+        let mut stream = state?;
+        match stream.next().await {
+            Some(Ok(chunk)) => Some((Ok(chunk), Some(stream))),
+            Some(Err(error)) => {
+                tracing::error!(%error, "audio stream failed after the response started");
+                Some((Err(error), None))
+            }
+            None => None,
+        }
+    }))
+}
+
+fn sse_stream(
+    stream: AudioStream,
+) -> impl Stream<Item = Result<Bytes, GatewayError>> + Send + 'static {
+    enum State {
+        Streaming(AudioStream),
+        Done,
+    }
+
+    stream::unfold(State::Streaming(stream), |state| async move {
+        match state {
+            State::Streaming(mut stream) => match stream.next().await {
+                None => Some((Ok(Bytes::from_static(DONE_FRAME.as_bytes())), State::Done)),
+                Some(Ok(chunk)) => {
+                    let frame = format!(
+                        "data: {{\"type\":\"speech.audio.delta\",\"audio\":\"{}\"}}\n\n",
+                        STANDARD.encode(chunk)
+                    );
+                    Some((Ok(Bytes::from(frame)), State::Streaming(stream)))
+                }
+                Some(Err(error)) => {
+                    tracing::error!(%error, "SSE speech stream failed after the response started");
+                    Some((Err(error), State::Done))
+                }
+            },
+            State::Done => None,
+        }
+    })
 }
 
 fn channel_kind_label(kind: ChannelKind) -> &'static str {

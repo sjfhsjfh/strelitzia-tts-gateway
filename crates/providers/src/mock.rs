@@ -25,7 +25,6 @@ impl TtsAdapter for MockAdapter {
         Capabilities {
             formats: FORMATS,
             supports_instructions: true,
-            supports_stream: false,
         }
     }
 
@@ -36,12 +35,12 @@ impl TtsAdapter for MockAdapter {
     ) -> Result<AudioResponse, GatewayError> {
         let body = format!("mock:{}:{}:{}", req.model, req.voice, req.input);
 
-        Ok(AudioResponse {
-            bytes: body.into_bytes().into(),
-            content_type: req.response_format.content_type().to_owned(),
-            provider: "mock".to_owned(),
-            voice: req.voice.clone(),
-            chars: req.input.chars().count(),
-        })
+        Ok(AudioResponse::once(
+            body.into_bytes(),
+            req.response_format.content_type(),
+            "mock",
+            req.voice.clone(),
+            req.input.chars().count(),
+        ))
     }
 }

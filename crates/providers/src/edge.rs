@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use edge_tts_rust::{EdgeTtsClient, Error as EdgeError, SpeakOptions};
+use bytes::Bytes;
+use edge_tts_rust::{EdgeTtsClient, Error as EdgeError, EventStream, SpeakOptions, SynthesisEvent};
+use futures_util::StreamExt;
+use futures_util::stream;
 use strelitzia_core::adapter::{Capabilities, TtsAdapter};
 use strelitzia_core::domain::{AudioResponse, Channel, ChannelKind, ResponseFormat, SpeechRequest};
 use strelitzia_core::error::GatewayError;
@@ -52,7 +55,6 @@ impl TtsAdapter for EdgeTtsAdapter {
         Capabilities {
             formats: FORMATS,
             supports_instructions: false,
-            supports_stream: false,
         }
     }
 
@@ -75,19 +77,45 @@ impl TtsAdapter for EdgeTtsAdapter {
             ..SpeakOptions::default()
         };
 
-        let result = self
+        let mut events = self
             .client
-            .synthesize(req.input.clone(), options)
+            .stream(req.input.clone(), options)
             .await
             .map_err(map_synthesis_error)?;
 
+        // Prefetch to the first audio frame so connection, auth, and voice
+        // failures can still fail over before the gateway commits.
+        let first = next_audio(&mut events).await?.ok_or_else(no_audio)?;
+        let stream = stream::once(async move { Ok::<_, GatewayError>(first) }).chain(
+            stream::try_unfold(events, |mut events| async move {
+                Ok(next_audio(&mut events).await?.map(|bytes| (bytes, events)))
+            }),
+        );
+
         Ok(AudioResponse {
-            bytes: result.audio.into(),
+            stream: Box::pin(stream),
             content_type: ResponseFormat::Mp3.content_type().to_owned(),
             provider: "edge_tts".to_owned(),
             voice: req.voice.clone(),
             chars: req.input.chars().count(),
         })
+    }
+}
+
+async fn next_audio(events: &mut EventStream) -> Result<Option<Bytes>, GatewayError> {
+    loop {
+        match events.next().await {
+            Some(Ok(SynthesisEvent::Audio(bytes))) => return Ok(Some(bytes)),
+            Some(Ok(SynthesisEvent::Boundary(_))) => {}
+            Some(Err(error)) => return Err(map_synthesis_error(error)),
+            None => return Ok(None),
+        }
+    }
+}
+
+fn no_audio() -> GatewayError {
+    GatewayError::Upstream {
+        message: "Edge TTS returned no audio".to_owned(),
     }
 }
 

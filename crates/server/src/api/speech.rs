@@ -1,11 +1,11 @@
 use axum::Json;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
-use strelitzia_core::{Channel, GatewayError, SpeechRequest, split_voice_reference};
+use strelitzia_core::{Channel, GatewayError, SpeechRequest, StreamFormat, split_voice_reference};
 
 use crate::api::{
     ApiError, AttemptRun, BodyRejection, RequestId, audio_response, execute_attempts,
-    filter_voice_candidates, record_request,
+    filter_voice_candidates, record_request, sse_response,
 };
 use crate::auth::AuthKey;
 use crate::state::AppState;
@@ -17,14 +17,15 @@ use crate::state::AppState;
     responses(
         (
             status = 200,
-            description = "Encoded audio",
+            description = "Encoded audio, or `text/event-stream` frames when `stream_format` is `sse`",
             content(
                 (inline(crate::openapi::BinaryAudio) = "audio/mpeg"),
                 (inline(crate::openapi::BinaryAudio) = "audio/opus"),
                 (inline(crate::openapi::BinaryAudio) = "audio/aac"),
                 (inline(crate::openapi::BinaryAudio) = "audio/flac"),
                 (inline(crate::openapi::BinaryAudio) = "audio/wav"),
-                (inline(crate::openapi::BinaryAudio) = "audio/pcm")
+                (inline(crate::openapi::BinaryAudio) = "audio/pcm"),
+                (inline(crate::openapi::SseStream) = "text/event-stream")
             )
         ),
         (status = 400, description = "Invalid request", body = strelitzia_core::ErrorEnvelope),
@@ -162,7 +163,14 @@ pub async fn create_speech(
             let provider = audio.provider.clone();
             let voice = audio.voice.clone();
             let audio_chars = audio.chars;
-            audio_response(audio, &request_id, &provider, &voice, audio_chars)
+            match request.stream_format {
+                StreamFormat::Audio => {
+                    audio_response(audio, &request_id, &provider, &voice, audio_chars)
+                }
+                StreamFormat::Sse => {
+                    sse_response(audio, &request_id, &provider, &voice, audio_chars)
+                }
+            }
         }
         None => ApiError::from(run.error.unwrap_or(GatewayError::Internal {
             message: "speech synthesis failed without an error".to_owned(),
